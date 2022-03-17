@@ -5,7 +5,7 @@ A small script to find valuation property keys in txt file.
 
 User steps to get the keys.
 
-1. Copy/paste all the content from the class into a txt file, I recommend using notepad ++ or notepad.
+1. Copy/paste all the content from the PHP class you want to search into a txt file, I recommend using notepad ++ or notepad.
 2. Save the file into the directory where the script is located.
 3. Start a BASH instance and navigate to the directory where the script is located.
 4. Enter "python main.py" in the BASH console.
