@@ -1,0 +1,2 @@
+one property key on one line valuation_ri_total
+Two property keys on one line valuation_special_assumptions and valuation_mv_amount
