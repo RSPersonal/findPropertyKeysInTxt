@@ -1,21 +1,28 @@
 import re
 import sys
 
-
+#Checking if the filename exists otherwise exit
+#Possible improvement: Ask user again for filename and dont exit right away
 try:
     text_file = open(input('Enter text file name. Example: test.txt: '), 'r')
 except FileNotFoundError as e:
     print('File not found, check filename.')
     sys.exit()
 
+#Reading the text file
 file_text = text_file.read()
 text_file.close()
+
+#Iniatiate the search
 keys_found = re.findall(r"\bvaluation_\w+", file_text)
 
-#Removing dublicates from array 
+#Removing possible dublicates from array 
 keys_without_duplicates = list(dict.fromkeys(keys_found))
+
+#Getting the amount of keys found
 keys_amount_found = len(keys_without_duplicates)
 
+#Checking if keys are found
 if keys_amount_found > 0:
     print(f"Found {str(keys_amount_found)} keys in file!")
     single_or_array = input('You want them printed out as array or single? single/array: ')

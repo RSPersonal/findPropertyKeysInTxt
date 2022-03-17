@@ -1,0 +1,2172 @@
+<?php
+/**
+ * Created by PhpStorm.
+ * User: Niels
+ * Date: 13-9-2019
+ * Time: 11:08
+ */
+
+namespace ReportingNaiApolloBundle\Reporting\Pages;
+
+use AppBundle\Entity\Valuation;
+use AppBundle\Exception\KateErrorFileNonReadableException;
+use AppBundle\Service\Reporting\CentralBase;
+use AppBundle\Service\Reporting\Components\Table;
+use AppBundle\Service\Reporting\Pages\CentralPagesAttachments;
+use AppBundle\StaticContainer;
+use AppBundle\StaticHelper;
+use Exception;
+use ReportingNaiApolloBundle\Reporting\CustomerBase;
+
+
+/**
+ * Class CustomerPagesFull
+ * @package ReportingNaiApolloBundle\Reporting\Pages
+ */
+abstract class CustomerPagesObject extends CustomerBase
+{
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws KateErrorFileNonReadableException
+     * @throws Exception
+     */
+    public static function generalObjectReportChapters(CustomerBase $pdf, Valuation $valuation)
+    {
+        $pdf->SetY($pdf->margeY);
+        self::propertySummary($pdf, $valuation);
+        self::note($pdf, $valuation);
+        self::specialAssumption($pdf, $valuation);
+        self::valuationSummary($pdf, $valuation);
+        CustomerPagesFull::ratings($pdf, $valuation);
+        CustomerPagesFull::placeSwot($pdf, $valuation);
+        CustomerPages::location($pdf, $valuation);
+        CustomerPages::market($pdf, $valuation);
+        CustomerPages::leaseMarket($pdf, $valuation);
+
+        //because uploads can cause some problems for the following chapters
+        $uploadedFilesMarket = StaticContainer::getReportCreator()->getAttachmentsByPropertyKeys($valuation, ['valuation_market_vision_attachment']);
+        $uploadedFilesLease = StaticContainer::getReportCreator()->getAttachmentsByPropertyKeys($valuation, ['valuation_market_vision_attachment_lease']);
+        if (Statichelper::value($uploadedFilesLease)) {
+            //leaseupload, addpage needed
+            $pdf->AddPage();
+        } elseif (Statichelper::value($uploadedFilesMarket)) {
+            //market upload, addpage needed if lease chapter is empty
+            if (StaticHelper::noValue(
+                $pdf->getPropertyValueOutput('valuation_market_prop_market_letting', $valuation) .
+                $pdf->getPropertyValueOutput('valuation_market_lease_supply', $valuation) .
+                $pdf->getPropertyValueOutput('valuation_market_lease_expert', $valuation))) {
+                $pdf->AddPage();
+            }
+        }
+
+        CustomerPages::comparables($pdf, $valuation);
+        CustomerPages::subjectOfValuation($pdf, $valuation);
+        CustomerPages::landregistry($pdf, $valuation);
+        CustomerPages::rights($pdf, $valuation);
+
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws KateErrorFileNonReadableException
+     * @throws Exception
+     */
+    public static function propertySummary(CustomerBase $pdf, Valuation $valuation)
+    {
+        $pdf->SetFont($pdf->getFontHeader());
+        $pdf->createHeader(ucfirst($pdf->trans('report.apollo_full.propertySummary.header.full')), 'numeric', [''], 0, 3, 0, true, 'L', false);
+        $pdf->resetFont();
+
+        $rowheight = 4.5;
+        $width = [55, 32];
+        $totalWidth = array_sum($width);
+        $lefSpace = $totalWidth + $pdf->GetRMargin();
+        $startY = $pdf->GetY();
+
+        $data = [];
+
+        //Valuation date
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.propertySummary.valuationDate.full')),
+            $pdf->getPropertyValueOutputOrNa('valuation_date_valuation')
+        ];
+
+        //Property type
+        $objectTypeCustom = $pdf->getPropertyValueOutput('valuation_object_type_other_custom');
+        if (StaticHelper::value($objectTypeCustom)) {
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.propertySummary.propertyType.full')),
+                $objectTypeCustom
+            ];
+        } else {
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.propertySummary.propertyType.full')),
+                ucfirst($pdf->getObjectSubTypeTranslatedWithFallback($valuation, 'normal'))
+            ];
+        }
+
+        //Site tenure
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.propertySummary.tenure.full')),
+            ucfirst($pdf->getPropertyValueOutputOrNa('valuation_site_tenure'))
+        ];
+
+        if ($pdf->checkOnLeasehold($valuation)) {
+            //only show on leasehold valuations
+            //Leasehold end date
+            $data[] = [
+                '   ' . ucfirst($pdf->trans('report.apollo_full.propertySummary.tenure.expiry')),
+                $pdf->getPropertyValueOutputOrNa('valuation_leasehold_enddate')
+            ];
+            if ($valuation->getPropertyValue('valuation_leasehold_enddate2')) {
+                $data[] = [
+                    '   ' . ucfirst($pdf->trans('report.apollo_full.propertySummary.tenure.expirySecond')),
+                    $pdf->getPropertyValueOutputOrNa('valuation_leasehold_enddate2')
+                ];
+            }
+        }
+
+        //Ownership
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.propertySummary.ownership.full')),
+            ucfirst($pdf->getPropertyValueOutput('valuation_ownership'))
+        ];
+
+        if (!$pdf->checkLandValuation($valuation) || $pdf->checkIncomeApproach($valuation)) {
+            //only show on valuations that are not a land valuation
+            //Construction year
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.propertySummary.yearConstruction.full')),
+                $pdf->getPropertyValueOutputOrNa('valuation_construction_year')
+            ];
+            //Renovation year description
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.propertySummary.yearRefurbishment.full')),
+                $pdf->getPropertyValueOutputOrNa('valuation_construction_renovation_year_desc')
+            ];
+            //NLA total
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.propertySummary.lettableArea.full')),
+                //modelTree Payload.Kpis.GLA
+                $pdf->getPropertyValueOutput('valuation_value_nla_total') . ' ' . $pdf->trans('basic.sqm')
+            ];
+        }
+
+        //Plotsize
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.propertySummary.plotSize.full')),
+            $pdf->customNumberOutput($pdf->getLandregistrySizeTotal($valuation), 0) . ' ' . $pdf->trans('basic.sqm')
+        ];
+
+        //Total parking
+        $totalParking = $pdf->getPropertyValueOutput('valuation_parking_total');
+        if (StaticHelper::value($totalParking)) {
+            $data[] = [
+                ucfirst($pdf->trans('property.valuation_parking_total.description')),
+                //modeltree Payload.CustomFields.AssetProperty_ParkingTotal
+                $totalParking
+            ];
+        }
+
+        //Main tenant
+        if ($valuation->getPropertyValue('valuation_use_main_tenant') && $valuation->getPropertyValue('valuation_value_nr_tenants_select')) {
+            //only show if available
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.propertySummary.mainTenant.full')),
+                $pdf->getPropertyValueOutputOrNa('valuation_use_main_tenant')
+            ];
+        }
+
+        if (!$pdf->checkLandValuation($valuation) ||$pdf->checkIncomeApproach($valuation)) {
+            //only show on valuations that are not a land valuation
+            $vacancyRate = $valuation->getPropertyValue('valuation_value_vacancy_rate');
+            if ($vacancyRate === null) {
+                $vacancyRate = 0;
+            }
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.propertySummary.currentVacancyRate.full')),
+                //modeltree Payload.Kpis.VacancyRateTech
+                $pdf->customPercentOutput($vacancyRate, 1)
+            ];
+
+            //Structural vacancy rate
+            $structuralVacancyRate = $pdf->getStructuralVacancyRate($valuation);
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.propertySummary.assumedStructuralVacancyRate.full')),
+                $pdf->customPercentOutput($structuralVacancyRate, 1)
+            ];
+
+            //Wault
+            $wault = $valuation->getPropertyValue('valuation_value_expirydate');
+            if (statichelper::value($wault)) {
+                $wault = $pdf->customNumberOutput($wault, 1) . ' ' . $pdf->trans('basic.years');
+            } else {
+                $wault = ucfirst($pdf->trans('basic.na'));
+            }
+            $data[] = [
+                strtoupper($pdf->trans('report.apollo_full.propertySummary.wault.full')),
+                //modeltree Payload.Kpis.LeaseLengthYearsMinimum
+                $wault
+            ];
+
+            //Current rent totoal /ri total
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.propertySummary.currentRent.full')),
+                //modeltree Payload.Kpis.PassingBaseRent
+                $pdf->getPropertyValueOutputOrNa('valuation_value_ri_total')
+            ];
+            //modeltree Payload.Kpis.TotalErv
+            $ervInclVacancy = $pdf->getPropertyValueOutputOrNa('valuation_value_erv_incl_erv_vacancy');
+            if ($pdf->checkIncomeApproach($valuation)) {
+                //modeltree EWV.ewv_market_rent
+                $ervInclVacancy = $pdf->getPropertyValueOutputOrNa('valuation_values_ewv_erv_incl_vacancy');
+            }
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.propertySummary.erv.full')),
+                $ervInclVacancy
+            ];
+
+            //Capex value
+            $text = ucfirst($pdf->trans('report.apollo_full.propertySummary.capexEstimation.full'));
+            //addition is different in a dcf report
+            $text .= $pdf->checkDcfReport($valuation) ? ' ' . $pdf->trans('report.apollo_full.propertySummary.capexEstimation.addition') : '';
+            $data[] = [
+                $text,
+                //modeltree Payload.CustomFields.AssetProperty_Capex
+                $pdf->customMoneyOutput($pdf->getCapExValue($valuation), 0)
+            ];
+        }
+
+        if ($pdf->checkDcfReport($valuation)) {
+            //only show in a dcf report
+            //Discount rate
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.propertySummary.discountRate.full')),
+                //modeltree Payload.DCF.DiscountRateNominal
+                $pdf->getPropertyValueOutputOrNa('valuation_value_discountrate')
+            ];
+            //Caprate subtype
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.propertySummary.capitalisationRate.full')),
+                //modeltree Payload.DCF.TerminalCapRate
+                $pdf->getPropertyValueOutputOrNa('valuation_value_caprate_perc_subtype1')
+            ];
+        }
+
+        foreach ($data as $row) {
+            $pdf->Write($rowheight, $row[0]);
+            $widthRight = $totalWidth - $pdf->GetX() + $pdf->GetLMargin();
+            $pdf->MultiCell($widthRight, $rowheight, $row[1], 0, 'R');
+        }
+
+        $endY = $pdf->GetY();
+
+        $pdf->SetY($startY);
+
+        //Setting main photo
+        $mainPhoto = $pdf->getExtraData('mainPhoto');
+        list($width, $height) = getimagesize($mainPhoto);
+        if ($height > $width) {
+            $align = 'R';
+        } else {
+            $align = 'L';
+        }
+
+        $pdf->setFontTemp($pdf->getKateCustomerColorR(), $pdf->getKateCustomerColorG(), $pdf->getKateCustomerColorB());
+        $pdf->makeRowsWithColumns([$totalWidth, 0], [['', ucfirst($pdf->trans('report.apollo_full.propertySummary.valuationProperty.full'))]], [], [], [], [$align]);
+        $pdf->resetFontTemp();
+        $startY = $pdf->GetY();
+
+        $minHeightImage = 50;
+        $heightImage = abs($endY - $startY);
+        if ($heightImage < $minHeightImage) {
+            $heightImage = $minHeightImage;
+            $endY = $startY + $heightImage;
+        }
+        $widthMax = $pdf->getEffectiveWidth() - $totalWidth;
+
+        $pdf->addImageToPage($mainPhoto, $lefSpace, $startY, $widthMax, $heightImage, $align);
+        $pdf->SetY($endY);
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function note(CustomerBase $pdf, Valuation $valuation)
+    {
+        //Need special type none for this header
+        $valuationNotes = $pdf->getPropertyValueOutput('valuation_notes', $valuation);
+        if (StaticHelper::value($valuationNotes)) {
+            CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('property.valuation_notes.description'), $pdf->getTypeForHeaderSubSub($pdf, $valuation), true);
+            $pdf->setText($valuationNotes, 0, $pdf->getRowHeight(), false, 'valuation_notes');
+        }
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function specialAssumption(CustomerBase $pdf, Valuation $valuation)
+    {
+        if ($pdf->checkKeysForProperty('valuation_value_val_marketvaluesubjecttospecialassumptions', 'valuation_value', $valuation)) {
+            $paragraph = $pdf->getPropertyValueOutput('valuation_proposal_special_assumptions', $valuation);
+            $pdf->createHeaderWithParagraphForApollo($pdf, $pdf->trans('report.apollo_full.specAssump.header.full') , $paragraph, 8, true, 'valuation_proposal_special_assumptions');
+        }
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function valuationSummary(CustomerBase $pdf, Valuation $valuation)
+    {
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), ($pdf->getRowHeight() * 20), $pdf->getRowHeight());
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.valuationSummary.header.full'),6);
+        CustomerPages::showValues($pdf, $valuation);
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function swot(CustomerBase $pdf, Valuation $valuation)
+    {
+        $strengthsArray = $pdf->getDataArrayFromProperties(['valuation_marketability_swot_strengths_maintenance',
+            'valuation_marketability_swot_strengths_location',
+            'valuation_marketability_swot_strengths_table',
+            'valuation_marketability_swot_strengths'],
+            $valuation, '-');
+        $weaknessesArray = $pdf->getDataArrayFromProperties(['valuation_marketability_swot_weaknesses_maintenance',
+            'valuation_marketability_swot_weaknesses_location',
+            'valuation_marketability_swot_weaknesses_table',
+            'valuation_marketability_swot_weaknesses'],
+            $valuation, '-');
+        $opportunitiesArray = $pdf->getDataArrayFromProperties(['valuation_marketability_swot_opportunities_maintenance',
+            'valuation_marketability_swot_opportunities_location',
+            'valuation_marketability_swot_opportunities_table',
+            'valuation_marketability_swot_opportunities'],
+            $valuation, '-');
+        $threatsArray = $pdf->getDataArrayFromProperties(['valuation_marketability_swot_threats_maintenance',
+            'valuation_marketability_swot_threats_location',
+            'valuation_marketability_swot_threats_table',
+            'valuation_marketability_swot_threats'],
+            $valuation, '-');
+
+        if (StaticHelper::value($strengthsArray)
+            || StaticHelper::value($weaknessesArray)
+            || StaticHelper::value($opportunitiesArray)
+            || StaticHelper::value($threatsArray)) {
+            //only show swot if there is information at all
+
+            $effectiveWidth = $pdf->getEffectiveWidth();
+            $halfPage = $effectiveWidth / 2 + $pdf->GetLMargin();
+            $halfEffectiveWidth = $effectiveWidth / 2;
+            $width = [7, $halfEffectiveWidth - 7];
+            $secondWidth = [$halfEffectiveWidth, 7, 0];
+
+            $textsLeft = [];
+            foreach ($strengthsArray as $row) {
+                $textsLeft[] = $row[1] ?? '';
+            }
+            $textsRight = [];
+            foreach ($weaknessesArray as $row) {
+                $textsRight[] = $row[1] ?? '';
+            }
+
+            //use this for now, should be improved
+            if (count($textsRight) > count($textsLeft)) {
+                $textsLeft = $textsRight;
+            } elseif (count($textsRight) < count($textsLeft)) {
+                $textsRight = $textsLeft;
+            }
+
+            foreach ($opportunitiesArray as $row) {
+                $textsLeft[] = $row[1] ?? '';
+            }
+
+            foreach ($threatsArray as $row) {
+                $textsRight[] = $row[1] ?? '';
+            }
+
+
+            // approx. of height SWOT, improve this if necessary, also do 50 pixels extra, as Nico rather has this on the next page than that it goes wrong
+            $extraHeight = 6 * $pdf->getRowHeight() + 50;
+            $pdf->setFitYForApollo($textsLeft, $halfEffectiveWidth, $pdf->getRowHeight(), $extraHeight);
+            $pdf->setFitYForApollo($textsRight, $halfEffectiveWidth, $pdf->getRowHeight(), $extraHeight);
+
+            $pdf->createHeader(ucfirst($pdf->trans('report.apollo_full.swot.header.full')), 'numeric', 'B', 0);
+
+            //set SW
+            $pdf->SetFont($pdf->getFont(), 'B');
+            $y = $pdf->GetY();
+            $pdf->setText(ucfirst($pdf->trans('report.apollo_full.swot.strengths.full')));
+            $pdf->SetXY($halfPage, $y);
+            $pdf->setText(ucfirst($pdf->trans('report.apollo_full.swot.weaknesses.full')));
+            $y = $pdf->GetY();
+            $pdf->makeRowsWithColumns($width, $strengthsArray);
+            $oldY = $pdf->GetY();
+            $pdf->SetXY($halfPage, $y);
+            $weaknessesArray = $pdf->addToArray($weaknessesArray, '', 0);
+            $pdf->makeRowsWithColumns($secondWidth, $weaknessesArray);
+
+            //add little space
+            if ($pdf->GetY() < $oldY) {
+                $pdf->SetY($oldY);
+            }
+            $pdf->addEnter(2);
+
+            //set OT
+            $pdf->SetFont($pdf->getFont(), 'B');
+            $y = $pdf->GetY();
+            $pdf->setText(ucfirst($pdf->trans('report.apollo_full.swot.opportunities.full')));
+            $pdf->SetXY($halfPage, $y);
+            $pdf->setText(ucfirst($pdf->trans('report.apollo_full.swot.threats.full')));
+            $y = $pdf->GetY();
+            $pdf->makeRowsWithColumns($width, $opportunitiesArray);
+            $oldY = $pdf->GetY();
+            $pdf->SetXY($halfPage, $y);
+            $threatsArray = $pdf->addToArray($threatsArray, '', 0);
+            $pdf->makeRowsWithColumns($secondWidth, $threatsArray);
+
+            //add little space
+            if ($pdf->GetY() < $oldY) {
+                $pdf->SetY($oldY);
+            }
+            $pdf->addEnter(2);
+        }
+    }
+
+    /**
+     * todo remove after acceptance May 2021 version and refactor function names
+     *
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function leaseholdEncumbrances(CustomerBase $pdf, Valuation $valuation)
+    {
+        $pdf->createHeader(ucfirst($pdf->trans('report.apollo_full.leaseholdewv.header')));
+        $pdf->createHeaderSub(ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.header')));
+
+        //land value
+        $tableProperty = 'valuation_value_leasehold_landvalue_table';
+        $width = [];
+        $heightTable = $pdf->fixedTableTypeOutput($tableProperty, $width, [], true, false);
+        $pdf->setFitYForApollo('', 0, $heightTable + 10);
+        $pdf->createHeaderSubSub($pdf->trans('report.apollo_full.leaseholdEncumbrances.landvalue.header'));
+        self::renderFixedTableTypeForApollo($pdf, $tableProperty, $width);
+
+
+        //uncompensated share
+        $tableProperty = 'valuation_value_uncompensated_share_table';
+        $width = [20, 28, 24, 22, 18, 28, 0];
+        $heightTable = $pdf->fixedTableTypeOutput($tableProperty, $width, [], true, false);
+        $pdf->setFitYForApollo('', 0, $heightTable + 10);
+        $pdf->createHeaderSubSub($pdf->trans('report.apollo_full.leaseholdEncumbrances.share.header'));
+        self::renderFixedTableTypeForApollo($pdf, $tableProperty, $width);
+
+
+        //general disadvantages
+        $headers = [];
+        $headers[] = [
+            '',
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.generalDisadvantages.valueFullOwner')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.generalDisadvantages.deductionPerc')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.generalDisadvantages.deductionValue'))
+        ];
+        $data = [];
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.generalDisadvantages.incomeValue')),
+            //modeltree EWV.ewv_income_value_rounded
+            $pdf->getPropertyValueOutput('valuation_value_leasehold_value_fullowner'),
+            //modeltree EWV.ewv_value_deduction
+            $pdf->getPropertyValueOutput('valuation_value_leasehold_deduction_perc'),
+            //modeltree EWV.ewv_deduction_value
+            $pdf->getPropertyValueOutput('valuation_value_leasehold_deduction_value')
+        ];
+        $config = self::getTableConfigurationWithPadding($pdf);
+        $width = [70, 40, 30, 40];
+        $config->setWidth($width);
+        $table = new Table($pdf);
+        $table->setRowsHeader($headers);
+        $table->setRowsData($data);
+
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(),
+            $pdf->calculateHeightRowsWithColumns($width, $data) + $pdf->calculateHeightRowsWithColumns($width, $headers), +10);
+        $pdf->createHeaderSubSub($pdf->trans('report.apollo_full.leaseholdEncumbrances.generalDisadvantages.header'));
+        $table->renderTable($config);
+
+
+        //summary
+        $headers = [];
+        $headers[] = [
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.method')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.valueFullOwner')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.valueAfterLeasehold')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.notCompensatedParts')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.generalDisadvantages')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.valueWithoutLeasehold'))
+        ];
+        $data = [];
+        //modeltree EWV.ewv_property_value_before_cap_payments
+        $valueWithoutLeaseholdPropertyValue = $valuation->getPropertyValue('valuation_value_leasehold_prop_value_before_cap_payments');
+        if ($valueWithoutLeaseholdPropertyValue) {
+            //supporting the old import structure with a dedicated property
+            $valueWithoutLeasehold = $valueWithoutLeaseholdPropertyValue;
+        } else {
+            //calculated based on import from model tree
+            $valueWithoutLeasehold =
+                $valuation->getPropertyValue('valuation_value_leasehold_value_fullowner')
+                -
+                $valuation->getPropertyValue('valuation_value_leasehold_land_value')
+                +
+                $valuation->getPropertyValue('valuation_value_leasehold_loss_comp_scheme')
+                +
+                $valuation->getPropertyValue('valuation_value_leasehold_gen_disadvantages');
+        }
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.incomeApproach')),
+            //modeltree EWV.ewv_income_value_rounded
+            $pdf->getPropertyValueOutput('valuation_value_leasehold_value_fullowner'),
+            //modeltree EWV.ewv_land_value_leasehold
+            $pdf->getPropertyValueOutput('valuation_value_leasehold_land_value'),
+            //modeltree EWV.ewv_loss_compensation_scheme
+            $pdf->getPropertyValueOutput('valuation_value_leasehold_loss_comp_scheme'),
+            //modeltree EWV.ewv_deduction_value
+            $pdf->getPropertyValueOutput('valuation_value_leasehold_gen_disadvantages'),
+            //modeltree sum above
+            $pdf->customMoneyOutput($valueWithoutLeasehold)
+        ];
+        $config = self::getTableConfigurationWithPadding($pdf);
+        $width = [0]; //keep this 0 instead of empty. In CentralBase there is an if-statement involving count "cols == 0". If this is empty there occurs an Notice: Undefined offset: -1 error.
+        $config->setWidth($width);
+        $table = new Table($pdf);
+        $table->setRowsHeader($headers);
+        $table->setRowsData($data);
+
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(),
+            $pdf->calculateHeightRowsWithColumns($width, $data) + $pdf->calculateHeightRowsWithColumns($width, $headers), +10);
+        $pdf->createHeaderSubSub($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.header'));
+        $table->renderTable($config);
+
+
+        //capitalisation
+        $data = [];
+        $data[] = [
+            '',
+            '       ' . $pdf->trans('report.apollo_full.leaseholdEncumbrances.capitalization.yearsUnexpired'),
+            $pdf->getPropertyValueOutput('valuation_leasehold_years_unexpired') . ' ' . $pdf->trans('basic.years')
+        ];
+        $data[] = [
+            '',
+            '       ' . $pdf->trans('report.apollo_full.leaseholdEncumbrances.capitalization.canon'),
+            $pdf->getPropertyValueOutput('valuation_leasehold_canon') . ' / ' . $pdf->trans('basic.year')
+        ];
+        $data[] = [
+            '',
+            '       ' . $pdf->trans('report.apollo_full.leaseholdEncumbrances.capitalization.yield'),
+            $pdf->customPercentOutput(0.05)
+        ];
+        $width = [70, 30, 0];
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), $pdf->calculateHeightRowsWithColumns($width, $data) + 20);
+        $pdf->createHeaderSubSub($pdf->trans('report.apollo_full.leaseholdEncumbrances.capitalization.header'));
+        $pdf->makeRowsWithColumns($width, $data);
+
+        $data = [];
+        $data[] = [
+            $pdf->trans('report.apollo_full.leaseholdEncumbrances.capitalization.capitalizedLeasehold'),
+            '=',
+            //modeltree EWV.ewv_capitalized_leasehold_payments
+            $pdf->getPropertyValueOutput('valuation_value_leasehold_cap_payments')
+        ];
+        $pdf->makeRowsWithColumns($width, $data, [], ['B', 'B', 'B']);
+
+
+        //market value of the leasehold
+        $data = [];
+        $data[] = [
+            $pdf->trans('property.valuation_value_leasehold_prop_value_before_cap_payments.description'),
+            '=',
+            //todo sum of different properties
+            //modeltree EWV.ewv_property_value_before_cap_payments
+            $pdf->getPropertyValueOutput('valuation_value_leasehold_prop_value_before_cap_payments')
+        ];
+        $data[] = ['EMPTY'];
+        $data[] = [
+            $pdf->trans('report.apollo_full.leaseholdEncumbrances.capitalization.capitalizedLeasehold'),
+            ':',
+            //modeltree EWV.ewv_capitalized_leasehold_payments
+            $pdf->getPropertyValueOutput('valuation_value_leasehold_cap_payments')
+        ];
+
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), $pdf->calculateHeightRowsWithColumns($width, $data) + 30);
+        $pdf->createHeaderSubSub($pdf->trans('report.apollo_full.leaseholdEncumbrances.leaseholdMv.header'));
+        $pdf->setText($pdf->getPropertyValueOutput('valuation_leasehold_desc', $valuation));
+
+        $pdf->makeRowsWithColumns($width, $data);
+
+        $data = [];
+        $data[] = [
+            $pdf->trans('property.valuation_value_leasehold_prop_value.description'),
+            ':',
+            //modeltree EWV.ewv_property_value
+            $pdf->getPropertyValueOutput('valuation_value_leasehold_prop_value')
+        ];
+        $data[] = ['EMPTY'];
+        $data[] = [
+            $pdf->trans('property.valuation_value_leasehold_mv_amount.description'),
+            ':',
+            //modeltree EWV.RoundedMarketValue
+            $pdf->getPropertyValueOutput('valuation_value_leasehold_mv_amount')
+        ];
+        $pdf->makeRowsWithColumns($width, $data, [], ['B', 'B', 'B']);
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function leasehold(CustomerBase $pdf, Valuation $valuation)
+    {
+        $pdf->createHeaderWithParagraphForApollo($pdf, ucfirst($pdf->trans('report.apollo_full.leasehold.header')),
+            $pdf->getPropertyValueOutput('valuation_leasehold_introduction', $valuation), 1, false, 'valuation_leasehold_introduction');
+        $pdf->addEnter();
+        $pdf->setText($pdf->trans('report.apollo_full.leasehold.desc'));
+        $pdf->addEnter();
+
+        $width = [80, 0];
+        $data = $pdf->generateLeaseholdData($valuation);
+        $pdf->makeRowsWithColumns($width, $data);
+
+        $leaseholdText = $pdf->getPropertyValueOutput('valuation_leasehold_comments');
+        if (Statichelper::value($leaseholdText)) {
+            $pdf->addEnter();
+            $pdf->setText($leaseholdText, 0, $pdf->getRowHeight(), false, 'valuation_leasehold_comments');
+        }
+
+        // Comments on leasehold
+        if ($valuation->getPropertyValue('valuation_leasehold_desc')) {
+            $pdf->createHeaderWithParagraphForApollo($pdf, $pdf->trans('report.apollo_full.leaseholdEncumbrances.leaseholdComments.header'), $pdf->getPropertyValueOutput('valuation_leasehold_desc'), 1, true, 'valuation_leasehold_desc');
+        }
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function leaseholdEncumbrancesMay2021(CustomerBase $pdf, Valuation $valuation)
+    {
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.leaseholdewv.header'), $pdf->getTypeForMainHeader($pdf, $valuation));
+        $leaseholdParagraph = $pdf->getPropertyValueOutput('valuation_leasehold_desc');
+        if (StaticHelper::value($leaseholdParagraph) && $pdf->checkIfFullReport($valuation)) {
+            $pdf->createHeaderWithParagraphForApollo($pdf, $pdf->trans('report.apollo_full.leasehold_methodology.header.full'), $leaseholdParagraph, 1, false, 'valuation_leasehold_desc', false);
+        }
+        $pdf->setFitYForApollo('', 0,$pdf->getRowHeight(), $pdf->getRowHeight() * 8);
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.leaseholdEncumbrances.header'),  1);
+        //land value
+        self::writeLandValueTableForLeaseholdEncumbrances($pdf, $valuation);
+
+        //uncompensated share
+        self::writeUncompensatedShareTableForLeaseholdEncumbrances($pdf, $valuation);
+
+        //general disadvantages
+        self::writeGeneralDisadvantagesTableForLeaseholdEncumbrances($pdf, $valuation);
+
+        //summary
+        self::writeSummaryTableForLeaseholdEncumbrances($pdf, $valuation);
+
+        //capitalisation
+        $width = [50, 50, 40, 0];
+        self::writeCapitalisationTableForLeaseholdEncumbrances($pdf, $valuation, $width);
+
+        //market value of the leasehold
+        $width = [80, 50, 40, 0];
+        self::writeMarketValueTableForLeaseholdEncumbrances($pdf, $valuation, $width);
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    private static function writeLandValueTableForLeaseholdEncumbrances(CustomerBase $pdf, Valuation $valuation)
+    {
+        $tableProperty = 'valuation_value_leasehold_landvalue_table';
+        $heightTable = $pdf->fixedTableTypeOutput($tableProperty, [], [], true, false);
+        $pdf->setFitYForApollo('', 0, $heightTable + 10);
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.leaseholdEncumbrances.landvalue.header'), 8);
+
+        $data = $pdf->getLeaseholdLandValueTableData($pdf, $valuation);
+        $table = new Table($pdf);
+        $table->setRowsHeader($data['header'] ?? []);
+        $table->setRowsData($data['data'] ?? []);
+        $table->setRowsTotal($data['total'] ?? []);
+        $config = $pdf->getTableConfigurationWithPadding($pdf);
+        $align = ['L', 'L', 'R', 'R', 'R', 'R', 'R'];
+        $config->setAlignmentForAllTypes($align);
+        $table->renderTable($config);
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    private static function writeUncompensatedShareTableForLeaseholdEncumbrances(CustomerBase $pdf, Valuation $valuation)
+    {
+        $tableProperty = 'valuation_value_uncompensated_share_table';
+        $heightTable = $pdf->fixedTableTypeOutput($tableProperty, [], [], true, false);
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), $heightTable + 10, $pdf->getRowHeight());
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.leaseholdEncumbrances.share.header'), 8);
+
+        $data = $pdf->getLeaseholdUncompensatedShareTableData($pdf, $valuation);
+        $table = new Table($pdf);
+        $table->setRowsHeader($data['header'] ?? []);
+        $table->setRowsData($data['data'] ?? []);
+        $table->setRowsTotal($data['total'] ?? []);
+        $config = $pdf->getTableConfigurationWithPadding($pdf);
+        $width = [25, 25, 23, 23, 18, 29, 0];
+        $config->setWidth($width);
+        $align = ['L', 'L', 'R', 'R', 'R', 'R', 'R'];
+        $config->setAlignmentForAllTypes($align);
+        $table->renderTable($config);
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    private static function writeGeneralDisadvantagesTableForLeaseholdEncumbrances(CustomerBase $pdf, Valuation $valuation)
+    {
+        $headers = [];
+        $headers[] = [
+            '',
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.generalDisadvantages.valueFullOwner')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.generalDisadvantages.deductionPerc')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.generalDisadvantages.deductionValue'))
+        ];
+        $data = [];
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.generalDisadvantages.incomeValue')),
+            //modeltree EWV.ewv_income_value_rounded
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_leasehold_value_fullowner', $valuation),
+            //modeltree EWV.ewv_value_deduction
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_leasehold_deduction_perc', $valuation),
+            //modeltree EWV.ewv_deduction_value
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_leasehold_deduction_value', $valuation)
+        ];
+        $config = $pdf->getTableConfigurationWithPadding($pdf);
+        $width = [70, 40, 30, 40];
+        $config->setWidth($width);
+        $align = ['L', 'R', 'R', 'R'];
+        $config->setAlignmentForAllTypes($align);
+        $config->setRowsStyle(['', '', '', 'B']);
+        $table = new Table($pdf);
+        $table->setRowsHeader($headers);
+        $table->setRowsData($data);
+
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(),
+            $pdf->calculateHeightRowsWithColumns($width, $data) + $pdf->calculateHeightRowsWithColumns($width, $headers), $pdf->getRowHeight());
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.leaseholdEncumbrances.generalDisadvantages.header'), 8);
+        $table->renderTable($config);
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    private static function writeSummaryTableForLeaseholdEncumbrances(CustomerBase $pdf, Valuation $valuation)
+    {
+        $headers = [];
+        $headers[] = [
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.method')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.valueFullOwner')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.valueAfterLeasehold')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.notCompensatedParts')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.generalDisadvantages')),
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.valueWithoutLeasehold'))
+        ];
+        $data = [];
+        //modeltree EWV.ewv_property_value_before_cap_payments
+        $valueWithoutLeaseholdPropertyValue = $valuation->getPropertyValue('valuation_value_leasehold_prop_value_before_cap_payments');
+        if ($valueWithoutLeaseholdPropertyValue) {
+            //supporting the old import structure with a dedicated property
+            $valueWithoutLeasehold = $valueWithoutLeaseholdPropertyValue;
+        } else {
+            //calculated based on import from model tree
+            $valueWithoutLeasehold =
+                $valuation->getPropertyValue('valuation_value_leasehold_value_fullowner')
+                -
+                $valuation->getPropertyValue('valuation_value_leasehold_land_value')
+                +
+                $valuation->getPropertyValue('valuation_value_leasehold_loss_comp_scheme')
+                +
+                $valuation->getPropertyValue('valuation_value_leasehold_gen_disadvantages');
+        }
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.incomeApproach')),
+            //modeltree EWV.ewv_income_value_rounded
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_leasehold_value_fullowner', $valuation),
+            //modeltree EWV.ewv_land_value_leasehold
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_leasehold_land_value', $valuation),
+            //modeltree EWV.ewv_loss_compensation_scheme
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_leasehold_loss_comp_scheme', $valuation),
+            //modeltree EWV.ewv_deduction_value
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_leasehold_gen_disadvantages', $valuation),
+            //modeltree sum above
+            $pdf->customMoneyOutput($valueWithoutLeasehold) ?? 0
+        ];
+        $config = $pdf->getTableConfigurationWithPadding($pdf);
+        $align = ['L', 'R', 'R', 'R', 'R', 'R'];
+        $config->setRowsStyle(['', '', '', '', '', 'B']);
+        $config->setAlignmentForAllTypes($align);
+        $table = new Table($pdf);
+        $table->setRowsHeader($headers);
+        $table->setRowsData($data);
+
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(),
+            $pdf->calculateHeightRowsWithColumns([0, 0, 0, 0, 0, 0], $data) + $pdf->calculateHeightRowsWithColumns([0, 0, 0, 0, 0, 0], $headers), $pdf->getRowHeight());
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.leaseholdEncumbrances.summary.header'), 8);
+        $table->renderTable($config);
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @param array $width
+     * @throws Exception
+     */
+    private static function writeCapitalisationTableForLeaseholdEncumbrances(CustomerBase $pdf, Valuation $valuation, array $width)
+    {
+        $data = [];
+        //TODO Add figure for remaining runtime, when received from modeltree
+        //temp fix till we get the remaining runtime figure from modeltree
+        $leaseholdYearsUnexpired = $pdf->getPropertyValueOutput('valuation_leasehold_years_unexpired');
+        if (Statichelper::novalue($leaseholdYearsUnexpired)) {
+            $leaseholdYearsUnexpiredString = $pdf->trans('basic.various_leasehold_terms');
+        } else {
+            $leaseholdYearsUnexpiredString = $leaseholdYearsUnexpired . ' ' . $pdf->trans('basic.years');
+        }
+        $data[] = [
+            '',
+            '       ' . $pdf->trans('report.apollo_full.leaseholdEncumbrances.capitalization.yearsUnexpired'),
+            $leaseholdYearsUnexpiredString
+        ];
+        $data[] = [
+            '',
+            '       ' . $pdf->trans('report.apollo_full.leaseholdEncumbrances.capitalization.canon'),
+            $pdf->getPropertyValueOutputOrShowZero('valuation_leasehold_canon', $valuation) . ' / ' . $pdf->trans('basic.year')
+        ];
+        $data[] = [
+            '',
+            '       ' . $pdf->trans('report.apollo_full.leaseholdEncumbrances.capitalization.yield'),
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_ewv_leasehold_yield', $valuation)
+        ];
+        $alignmentForAllTypes = ['L', 'R', 'R', 'R'];
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), $pdf->calculateHeightRowsWithColumns($width, $data) + 20, $pdf->getRowHeight());
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.leaseholdEncumbrances.capitalization.header'), 8);
+        $pdf->makeRowsWithColumns($width, $data, [], [], [], $alignmentForAllTypes);
+
+        $data = [];
+        $data[] = [
+            $pdf->trans('report.apollo_full.leaseholdEncumbrances.capitalization.capitalizedLeasehold'),
+            '=',
+            //modeltree EWV.ewv_capitalized_leasehold_payments
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_leasehold_cap_payments', $valuation)
+        ];
+        $pdf->makeRowsWithColumns($width, $data, [], ['B', 'B', 'B'], [], $alignmentForAllTypes);
+
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @param array $width
+     * @throws Exception
+     */
+    private static function writeMarketValueTableForLeaseholdEncumbrances(CustomerBase $pdf, Valuation $valuation, array $width)
+    {
+        $equalSign = '=';
+        $data = [];
+        $data[] = [
+            $pdf->trans('property.valuation_value_leasehold_prop_value_before_cap_payments.description'),
+            $equalSign,
+            //todo sum of different properties
+            //modeltree EWV.ewv_property_value_before_cap_payments
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_leasehold_prop_value_before_cap_payments', $valuation)
+        ];
+        $data[] = ['EMPTY'];
+        $data[] = [
+            $pdf->trans('report.apollo_full.leaseholdEncumbrances.capitalization.capitalizedLeasehold'),
+            $equalSign,
+            //modeltree EWV.ewv_capitalized_leasehold_payments
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_leasehold_cap_payments', $valuation)
+        ];
+
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), $pdf->calculateHeightRowsWithColumns($width, $data) + 30, $pdf->getRowHeight());
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.leaseholdEncumbrances.leaseholdMv.header'), 8);
+        $pdf->setText($pdf->getPropertyValueOutput('valuation_leasehold_desc', $valuation), 0, $pdf->getRowHeight(), false, 'valuation_leasehold_desc');
+
+        $align = ['L', 'R', 'R'];
+        $pdf->makeRowsWithColumns($width, $data, [], [], [], $align);
+
+        $data = [];
+        $data[] = [
+            $pdf->trans('property.valuation_value_leasehold_prop_value.description'),
+            $equalSign,
+            //modeltree EWV.ewv_property_value
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_leasehold_prop_value', $valuation)
+        ];
+        $data[] = ['EMPTY'];
+        $pdf->addEnter();
+        $pdf->makeRowsWithColumns($width, $data, [], [], [], $align);
+
+        $data = [];
+        $data[] = [
+            $pdf->trans('property.valuation_value_leasehold_mv_amount.description'),
+            $equalSign,
+            //modeltree EWV.RoundedMarketValue
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_ewv_leasehold_amount_rounded', $valuation)
+        ];
+        $pdf->makeRowsWithColumns($width, $data, [], ['B', 'B', 'B'], [], $align);
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function tenancySchedule(CustomerBase $pdf, Valuation $valuation)
+    {
+        //things needed to calculate if we want this table on the same page or on the next page
+        $width = [];
+        $propertyKey = 'valuation_tenant_table';
+        $height = $pdf->calculateHeightFixedTableType($propertyKey, $width);
+        $header = ucfirst($pdf->trans('report.apollo_full.tenancySchedule.header.full'));
+        $pdf->setFitYForApollo($header, 0, $pdf->getRowHeight(), $pdf->getRowHeight() * 2 + $height);
+        if ($pdf->GetY() > 210) {
+            //always go to next page for the overview if it at such low position
+            $pdf->AddPage();
+        }
+
+        //creating the header now we know the page
+        $pdf->createHeader($header);
+
+        //create the configfile we will use for the table
+        $config = self::getTableConfigurationWithPadding($pdf);
+        $headersAlign = ['L', 'C', 'C', 'C', 'C', 'C', 'C', 'C', 'C', 'C', 'C'];
+        $restAlign = ['L', 'C', 'C', 'R', 'C', 'R', 'R', 'C', 'C', 'C', 'R'];
+        $config->setHeadersAlign($headersAlign);
+        $config->setRowsAlign($restAlign);
+        $config->setTotalsAlign($restAlign);
+
+        //the modeltree way of making the tenant table
+        //this way also has a backup for previous exports and import
+        //this means we do use the original tenant table, but if a WAULT is not available, we just calculate it
+        $array = $pdf->getTenanttableTableData($pdf, $valuation);
+
+        //place the available data in the right places of the table
+        $header = $array['header'] ?? [];
+        $data = $array['data'] ?? [];
+        $total = $array['total'] ?? [];
+        $table = new Table($pdf);
+        $table->setRowsHeader($header);
+        $table->setRowsData($data);
+        $table->setRowsTotal($total);
+
+        //make sure the headers show on each page and render table
+        $pdf->fixedTableHeader = [
+            'propertyKey' => $propertyKey,
+            'config' => $config
+        ];
+        $table->renderTable($config);
+        $pdf->fixedTableHeader = null;
+
+//            //modeltree rent roll old way, keep this temporarily until connection is successful in use for 3 months
+//            self::renderFixedTableTypeForApollo($pdf, $propertyKey, $width, null, null, $config);
+
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function relettingAssumptions(CustomerBase $pdf, Valuation $valuation)
+    {
+        //model tree rent roll provides all the values needed in this table
+        $propertyKey = 'valuation_tenant_table_reletting';
+
+        //needed info to check if it fits on a page
+        $header = ucfirst($pdf->trans('report.apollo_full.relettingAssumptions.header.full'));
+        $width = [30, 15, 11, 15, 17, 16, 16, 14, 18, 16, 0];
+        $height = $pdf->calculateHeightFixedTableType($propertyKey, $width);
+        $pdf->setFitYForApollo($header, 0, $pdf->getRowHeight(), $pdf->getRowHeight() * 2 + $height);
+        if ($pdf->GetY() > 210) {
+            //always go to next page for the overview if it at such low position
+            $pdf->AddPage();
+        }
+
+        //create the header
+        $pdf->createHeader($header);
+
+        //create the config
+        $headersAlign = ['L', 'C', 'C', 'C', 'C', 'C', 'C', 'C', 'C', 'C', 'C'];
+        $restAlign = ['L', 'C', 'C', 'C', 'C', 'R', 'R', 'C', 'C', 'C', 'C'];
+        $config = self::getTableConfigurationWithPadding($pdf);
+        $config->setHeadersAlign($headersAlign);
+        $config->setRowsAlign($restAlign);
+        $config->setTotalsAlign($restAlign);
+
+        //the modeltree way of making the reletting table
+        //this way also has a backup for previous exports and import
+        //this means we do use the original reletting table, but if a units is not available, we just calculate it
+        $array = $pdf->getRelettingtableTableData($pdf, $valuation);
+
+        //place the available data in the right places of the table
+        $header = $array['header'] ?? [];
+        $data = $array['data'] ?? [];
+        $total = $array['total'] ?? [];
+        $table = new Table($pdf);
+        $table->setRowsHeader($header);
+        $table->setRowsData($data);
+        $table->setRowsTotal($total);
+
+        //make sure the headers show on each page and render table
+        $pdf->fixedTableHeader = [
+            'propertyKey' => $propertyKey,
+            'config' => $config
+        ];
+        $table->renderTable($config);
+        $pdf->fixedTableHeader = null;
+
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function landValue(CustomerBase $pdf, Valuation $valuation)
+    {
+        $propertyKey = 'valuation_value_land_value_table';
+
+        if ($pdf->checkIfFixedTableTypeHasData($propertyKey) || $pdf->checkLandValuation($valuation)) {
+            $pdf->AddPage();
+            CustomerPages::placeHeaderBasedOnType($pdf,$pdf->trans('report.apollo_full.landValue.header.full'), $pdf->getTypeForMainHeader($pdf, $valuation));
+            //show chapter when there is data or when it is a land valuation, so the user does not get confused
+            $width = [];
+            $height = $pdf->calculateHeightFixedTableType($propertyKey, $width);
+            $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), $pdf->getRowHeight() * 2 + $height);
+            if ($pdf->GetY() > 200) {
+                //always go to next page for the overview if it at such low position
+                $pdf->AddPage();
+            }
+            //Custom Land value table
+            $tableKey = $propertyKey;
+            if ($pdf->checkIfFixedTableTypeHasData($tableKey)) {
+                //land value part via the MT connection way
+                $pdf->createHeaderWithParagraphForApollo($pdf, $pdf->trans('report.apollo_full.landValue.assessment.header'), '', 1, false, '', false);
+                //TODO ugly fix for now
+                $pdf->removeWhiteSpace($pdf, $pdf->getRowHeight());
+                //the modeltree way of making the land value table
+                //it's completely composed of itself but the headers of the original table are used
+                $array = $pdf->getLandValueTableData($pdf, $valuation);
+
+                //place the available data in the right places of the table
+                $header = $array['header'] ?? [];
+                $data = $array['data'] ?? [];
+                $total = $array['total'] ?? [];
+                $table = new Table($pdf);
+                $table->setRowsHeader($header);
+                $table->setRowsData($data);
+                $table->setRowsTotal($total);
+
+                $config = $pdf->getTableConfigurationWithPadding($pdf);
+                //make sure the headers show on each page and render table
+                $width = [];
+                $config->setAlignmentForAllTypes(['L', 'L', 'R', 'R', 'C', 'R']);
+                $config->setWidth($width);
+                $pdf->fixedTableHeader = [
+                    'propertyKey' => $tableKey,
+                    'config' => $config
+                ];
+                $table->renderTable($config);
+                $pdf->fixedTableHeader = null;
+            }
+            $pdf->addEnter();
+
+            //modeltree EWV.ewv_land_value_prof
+            $profitableValue = $pdf->checkIfEmptyAndTransformNumberToZero($valuation, 'valuation_value_profitable_land_value_amount');
+            //modeltree EWV.ewv_land_value_nonprof
+            $unprofitableValue = $pdf->checkIfEmptyAndTransformNumberToZero($valuation, 'valuation_value_nonprofitable_land_value_amount');
+            //modeltree EWV.ewv_land_value_total
+            $total = $pdf->checkIfEmptyAndTransformNumberToZero($valuation, 'valuation_value_land_value_amount');
+            $width = [70, 80, 0];
+            $data = [];
+            $data[] = [
+                '',
+                $pdf->trans('report.apollo_full.landValue.assessment.profitable'),
+                $pdf->customMoneyOutput($profitableValue)
+            ];
+            $data[] = [
+                '',
+                $pdf->trans('report.apollo_full.landValue.assessment.nonprofitable'),
+                $pdf->customMoneyOutput($unprofitableValue)
+            ];
+            $pdf->makeRowsWithColumns($width, $data, [], [], [], ['L', 'L', 'R']);
+            $text = $pdf->checkLandValuation($valuation) ? $pdf->trans('report.apollo_full.landValue.assessment.premTotal') : $pdf->trans('report.apollo_full.landValue.assessment.total');
+            $data = [];
+            $data[] = [
+                '',
+                $text,
+                $pdf->customMoneyOutput($total)
+            ];
+            $pdf->makeRowsWithColumns($width, $data, [0, 0, 'T'], ['', '', 'B'], [], ['L', 'L', 'R']);
+//            if ($pdf->checkLandValuation($valuation)) {
+//                $data = [];
+//                $ewvCorrCapex = $pdf->checkIfEmptyAndTransformNumberToZero($valuation, 'valuation_value_ewv_corr_capex');
+//                $data[] = [
+//                    '',
+//                    $pdf->trans('report.apollo_full.landValue.assessment.deductions'),
+//                    //modeltree Payload.EWV.ewv_capex
+//                    $pdf->customMoneyOutput($ewvCorrCapex)
+//                ];
+//                $pdf->makeRowsWithColumns($width, $data, [0, 0, 'B'], ['', '', ''], [], ['L', 'L', 'R']);
+//                $data = [];
+//                $landValueUnrounded = $pdf->checkIfEmptyAndTransformNumberToZero($valuation, 'valuation_value_ewv_amount_unrounded');
+//                $data[] = [
+//                    '',
+//                    $pdf->trans('report.apollo_full.landValue.assessment.unroundedTotal'),
+//                    //modeltree EWV.ewv_income_value_unrounded
+//                    $pdf->customMoneyOutput($landValueUnrounded)
+//                ];
+//                $pdf->makeRowsWithColumns($width, $data, [0, 0, 'T'], ['', '', 'B'], [], ['L', 'L', 'R']);
+//                $data = [];
+//                $ewvRounded = $pdf->checkIfEmptyAndTransformNumberToZero($valuation, 'valuation_value_ewv_amount');
+//                $data[] = [
+//                    '',
+//                    $pdf->trans('report.apollo_full.landValue.assessment.roundedTotal'),
+//                    //modeltree EWV.ewv_income_value_rounded
+//                    $pdf->customMoneyOutput($ewvRounded)
+//                ];
+//                $pdf->makeRowsWithColumns($width, $data, [], ['', '', 'B'], [], ['L', 'L', 'R']);
+//            }
+
+            $propertyKey = 'valuation_methodology_land_value';
+            $propertyKeyEstimate = 'valuation_methodology_land_value_estimate';
+            $textLandValue = $pdf->getPropertyValueOutput($propertyKey);
+            $textLandValueEstimate = $pdf->getPropertyValueOutput($propertyKeyEstimate);
+            if (Statichelper::value($textLandValue)) {
+                $pdf->setFitY2([$textLandValue, $textLandValueEstimate], 0, 5 * $pdf->getRowHeight(), $pdf->getRowHeight());
+                CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.landValue.explanatoryNotes.header'),  1);
+
+                //original text that would have appeared above in the createheader, is now in this new subparagraph
+                $pdf->createHeaderWithParagraphForApollo($pdf, $pdf->trans('property.valuation_methodology_land_value.description'),
+                    $textLandValue, 8, true, '', false);
+
+                $pdf->createHeaderWithParagraphForApollo($pdf, $pdf->trans('property.valuation_methodology_land_value_estimate.description'),
+                    $textLandValueEstimate, 8, true);
+            }
+        }
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function tenantQuality(CustomerBase $pdf, Valuation $valuation)
+    {
+        $germanPercentDate = $pdf->customDateOutput($valuation->getPropertyValue('valuation_average_german_credit_rating_date'), '%B %Y');
+        $averageGermanPercentOutput = $pdf->getPropertyValueOutput('valuation_average_german_credit_rating_percent');
+
+        if (!$pdf->checkKeysForProperty(['2', '3'], 'valuation_value_nr_tenants_select')) {
+            $s = '';
+        } else {
+            $s = 's';
+        }
+
+        if ($pdf->checkKeysForProperty(['1', '2', '3'], 'valuation_value_nr_tenants_select')) {
+            if ($pdf->GetY() > $pdf->getPageHeight() / 3 * 2) $pdf->AddPage(); //only do after two/third of the page
+
+            $date = $pdf->getPropertyValueOutput('valuation_tenant_credit_rating_date');
+            $text1 = $pdf->trans('report.apollo_full.tentantQuality.creditRisk.desc', ['%s%' => $s]);
+            $text1 .= $pdf->trans('report.apollo_full.tentantQuality.creditRiskExtra.desc', ['%date%' => $date]);
+            CustomerPages::placeHeaderBasedOnType($pdf, ucfirst($pdf->trans('report.apollo_full.tentantQuality.header.full')), $pdf->getTypeForMainHeader($pdf, $valuation));
+            $pdf->setText($text1);
+
+            $mainTenant = $pdf->getPropertyValueOutput('valuation_use_main_tenant');
+            $index = $pdf->getPropertyValueOutput('valuation_tenant_credit_rating_index');
+            $percentValue = $valuation->getPropertyValue('valuation_tenant_credit_rating_percentage');
+            $assessment = $pdf->getPropertyValueOutPut('valuation_tenant_credit_rating_assess');
+            $percentOutput = $pdf->customPercentOutput($percentValue);
+            if ($percentValue < $averageGermanPercentOutput) {
+                $higherLower = $pdf->trans('report.apollo_full.tentantQuality.below.desc');
+            } else {
+                $higherLower = $pdf->trans('report.apollo_full.tentantQuality.above.desc');
+            }
+            $n = '';
+            if ($pdf->checkKeysForProperty(['average', 'excellent'], 'valuation_tenant_credit_rating_assess')) $n = 'n';
+            $text2 = $pdf->trans('report.apollo_full.tentantQuality.creditworthiness.desc', ['%index%' => $index, '%n%' => $n, '%assessment%' => $assessment]);
+            $text2 .= ' ' . $pdf->trans('report.apollo_full.tentantQuality.probability.desc', ['%percentOutput%' => $percentOutput, '%higherLower%' => $higherLower, '%germanPercentOutput%' => $averageGermanPercentOutput, '%germanPercentDate%' => $germanPercentDate]);
+
+            $property = ucfirst($pdf->trans('property.valuation_tenant_credit_rating_assess.description'));
+            $dataAssessments = [
+                $property => 'valuation_tenant_credit_rating_assess'
+            ];
+
+            $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), ($pdf->getRowHeight() * 6), $pdf->getRowHeight());
+            CustomerPages::placeHeaderBasedOnType($pdf, $mainTenant, 1);
+            CustomerPages::createAssessmentGraph($pdf, $valuation, $dataAssessments);
+            $pdf->setText($text2);
+        }
+
+        if ($pdf->checkKeysForProperty(['2', '3'], 'valuation_value_nr_tenants_select')) {
+            $mainTenant = $pdf->getPropertyValueOutput('valuation_use_main_tenant2');
+            $index = $pdf->getPropertyValueOutput('valuation_tenant_credit_rating_index2');
+            $percentValue = $valuation->getPropertyValue('valuation_tenant_credit_rating_percentage2');
+            $assessment = $pdf->getPropertyValueOutPut('valuation_tenant_credit_rating_assess2');
+            $percentOutput = $pdf->customPercentOutput($percentValue);
+            if ($percentValue < $averageGermanPercentOutput) {
+                $higherLower = $pdf->trans('report.apollo_full.tentantQuality.below.desc');
+            } else {
+                $higherLower = $pdf->trans('report.apollo_full.tentantQuality.above.desc');
+            }
+            $n = '';
+            if ($pdf->checkKeysForProperty(['average', 'excellent'], 'valuation_tenant_credit_rating_assess2')) $n = 'n';
+            $text2 = $pdf->trans('report.apollo_full.tentantQuality.creditworthiness.desc', ['%index%' => $index, '%n%' => $n, '%assessment%' => $assessment]);
+            $text2 .= ' ' . $pdf->trans('report.apollo_full.tentantQuality.probability.desc', ['%percentOutput%' => $percentOutput, '%higherLower%' => $higherLower, '%germanPercentOutput%' => $averageGermanPercentOutput, '%germanPercentDate%' => $germanPercentDate]);
+
+            $property = ucfirst($pdf->trans('property.valuation_tenant_credit_rating_assess.description'));
+            $dataAssessments = [
+                $property => 'valuation_tenant_credit_rating_assess2'
+            ];
+
+            $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), ($pdf->getRowHeight() * 6), $pdf->getRowHeight());
+            CustomerPages::placeHeaderBasedOnType($pdf, $mainTenant, 1);
+            CustomerPages::createAssessmentGraph($pdf, $valuation, $dataAssessments);
+            $pdf->setText($text2);
+        }
+        if ($pdf->checkKeysForProperty(['3'], 'valuation_value_nr_tenants_select')) {
+            $mainTenant = $pdf->getPropertyValueOutput('valuation_use_main_tenant3');
+            $index = $pdf->getPropertyValueOutput('valuation_tenant_credit_rating_index3');
+            $percentValue = $valuation->getPropertyValue('valuation_tenant_credit_rating_percentage3');
+            $assessment = $pdf->getPropertyValueOutPut('valuation_tenant_credit_rating_assess3');
+            $percentOutput = $pdf->customPercentOutput($percentValue);
+
+            if ($percentValue < $averageGermanPercentOutput) {
+                $higherLower = $pdf->trans('report.apollo_full.tentantQuality.below.desc');
+            } else {
+                $higherLower = $pdf->trans('report.apollo_full.tentantQuality.above.desc');
+            }
+            $n = '';
+            if ($pdf->checkKeysForProperty(['average', 'excellent'], 'valuation_tenant_credit_rating_assess3')) $n = 'n';
+            $text2 = $pdf->trans('report.apollo_full.tentantQuality.creditworthiness.desc', ['%index%' => $index, '%n%' => $n, '%assessment%' => $assessment]);
+            $text2 .= ' ' . $pdf->trans('report.apollo_full.tentantQuality.probability.desc', ['%percentOutput%' => $percentOutput, '%higherLower%' => $higherLower, '%germanPercentOutput%' => $averageGermanPercentOutput, '%germanPercentDate%' => $germanPercentDate]);
+
+            $property = ucfirst($pdf->trans('property.valuation_tenant_credit_rating_assess.description'));
+            $dataAssessments = [
+                $property => 'valuation_tenant_credit_rating_assess3'
+            ];
+
+            $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), ($pdf->getRowHeight() * 6), $pdf->getRowHeight());
+            CustomerPages::placeHeaderBasedOnType($pdf, $mainTenant, 1);
+            CustomerPages::createAssessmentGraph($pdf, $valuation, $dataAssessments);
+            $pdf->setText($text2);
+        }
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function valuationAssumptions(CustomerBase $pdf, Valuation $valuation)
+    {
+        if (!$pdf->checkOnLeasehold($valuation) && !$pdf->checkIncomeApproach($valuation) && !$pdf->checkLandValuation($valuation)) {
+            //Check if chapters are in report or otherwise the A3 format will be continued from the tables before
+            $pdf->AddPage();
+        } else {
+            $pdf->setFitY2('', 0, $pdf->getRowHeight() * 25, $pdf->getRowHeight());
+        }
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.valuationAssumptions.header.full'), $pdf->getTypeForMainHeader($pdf, $valuation));
+
+        //first part of the chapter is 6 rows in height + additional heights for the headers
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), $pdf->getRowHeight() * 6 + 19);
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.valuationAssumptions.generalAssumptions.full'), 1);
+
+        //oldWay collection loss
+        $collectionLoss = $valuation->getPropertyValue('valuation_value_collection_loss');
+        if (!$collectionLoss) {
+            //modeltree additional cashflow collection loss
+            $collectionLoss = $pdf->getValueFromFixedTableTypeRowByIdentifyingColumn('valuation_value_additional_cashflows_table',
+                'percent', 'Collection Loss', 'type', $valuation);
+        }
+        //oldWay inflation rate
+        $inflationRate = $valuation->getPropertyValue('valuation_value_inflation_rate');
+        if (!$inflationRate) {
+            //modeltree Payload.Rates.Name == BPI, --> average T values
+            //todo calculate based on average of the whole row
+            $inflationRate = $pdf->getValueFromFixedTableTypeRowByIdentifyingColumn('valuation_value_modeltree_rates_table',
+                't1', 'BPI', 'name', $valuation);
+        }
+
+        /** create the table */
+        $data = [];
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.valuationAssumptions.discountRate.full')),
+            //modeltree Payload.DCF.DiscountRateNominal
+            $pdf->getPropertyValueOutput('valuation_value_discountrate'),
+            ucfirst($pdf->trans('report.apollo_full.valuationAssumptions.capitalisationRate.full')),
+            $pdf->getPropertyValueOutput('valuation_value_caprate_perc_subtype1')
+
+        ];
+        $width = [60, 25, 60, 25];
+        $pdf->makeRowsWithColumns($width, $data);
+
+
+        if ($pdf->checkIfFixedTableTypeHasData('valuation_value_modeltree_rates_table', $valuation)) {
+            $pdf->addEnter(3);
+            Customerpages::placeRatesTable($pdf, $valuation);
+        }
+
+        if ($pdf->checkDcfReport($valuation)) {
+            // Costs assumptions
+            $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), $pdf->getRowHeight() * 25, $pdf->getRowHeight());
+            CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.valuationAssumptions.costAssumptions.full'), 1);
+            $data = [];
+            $data[] = [
+                ucfirst($pdf->trans('report.apollo_full.valuationAssumptions.capitalExpenditure.full')),
+                //modeltree Payload.CustomFields.AssetProperty_Capex
+                $pdf->customMoneyOutput($pdf->getCapExValue($valuation), 0),
+                ucfirst($pdf->trans('report.apollo_full.valuationAssumptions.collectionLoss.full')),
+                $pdf->customPercentOutput($collectionLoss, 2)
+            ];
+            $pdf->makeRowsWithColumns($width, $data);
+            $pdf->addEnter();
+
+            CustomerPagesFull::placeOpexTable($pdf);
+        }
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function appraisersComment(CustomerBase $pdf, Valuation $valuation)
+    {
+        //create a set of properties corresponding to the subchapters here
+        $propertySets = [];
+        $propertySets[] = [
+            'header' => $pdf->trans('report.apollo_full.explanatory_notes.header.full'),
+            'properties' => [
+                $pdf->trans('report.apollo_full.motivational_methodology.header.full') => 'valuation_motivation_methodology_desc',
+                $pdf->trans('report.apollo_full.property_life.header.full') => 'valuation_property_life_desc',
+                $pdf->trans('report.apollo_full.property_layout_options.header.full') => 'valuation_property_layout_options',
+                $pdf->trans('report.apollo_full.property_lettings.header.full') => 'valuation_lettings_desc',
+                $pdf->trans('report.apollo_full.property_vacancy.header.full') => 'valuation_property_vacancy_desc',
+                $pdf->trans('report.apollo_full.property_market_baserates.header.full') => 'valuation_market_baserates',
+                $pdf->trans('report.apollo_full.value_rent_explanation.header.full') => 'valuation_value_rent_explanation',
+                $pdf->trans('report.apollo_full.property_yield.header.full') => 'valuation_property_yield_desc',
+                $pdf->trans('report.apollo_full.capitalisation_yield.header.full') => 'valuation_capitalisation_yield_desc',
+                $pdf->trans('report.apollo_full.total_deductions.header.full') => 'valuation_value_total_deductions_desc'
+            ]
+        ];
+        $propertySets[] = [
+            'header' => $pdf->trans('category.valuation.subcategory.methodology_property'),
+            'properties' => [
+                $pdf->trans('property.valuation_motivation_methodology_desc2.description') => 'valuation_motivation_methodology_desc2',
+                $pdf->trans('property.valuation_property_gla_desc.description') => 'valuation_property_gla_desc',
+                $pdf->trans('property.valuation_property_life_desc2.description') => 'valuation_property_life_desc2',
+                $pdf->trans('property.valuation_construction_costs_desc.description') => 'valuation_construction_costs_desc',
+                $pdf->trans('property.valuation_property_deprecation_desc.description') => 'valuation_property_deprecation_desc',
+                $pdf->trans('property.valuation_property_external_facilities.description') => 'valuation_property_external_facilities',
+                $pdf->trans('property.valuation_construction_costs_extra_desc.description') => 'valuation_construction_costs_extra_desc',
+                $pdf->trans('property.valuation_methodology_safety_discount_desc.description') => 'valuation_methodology_safety_discount_desc',
+                $pdf->trans('property.valuation_methodology_market_adjustments_desc.description') => 'valuation_methodology_market_adjustments_desc',
+                $pdf->trans('property.valuation_value_total_deductions_desc2.description') => 'valuation_value_total_deductions_desc2'
+            ]
+        ];
+        //check all the property sets
+        foreach ($propertySets as $set) {
+
+            //first check if the set must show
+            $show = false;
+            foreach ($set as $option => $value) {
+                if ($option == 'properties') {
+                    foreach ($value as $propertyKey) {
+                        if ($valuation->getPropertyValue($propertyKey)) {
+                            //there is value, show it!
+                            $show = true;
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+
+            if ($show) {
+                //show the set as it has a value in it
+                foreach ($set as $option => $value) {
+                    if ($option == 'header') {
+                        $pdf->createHeaderWithParagraphForApollo($pdf, $value, '', 1);
+                    } elseif ($option == 'properties') {
+                        foreach ($value as $header => $propertyKey) {
+                            $paragraph = $pdf->getPropertyValueOutput($propertyKey);
+                            if (StaticHelper::value($paragraph)) {
+                                //TODO FIx margins here, ugly fix for now. Somehow a margin of 5 is being set.
+                                $pdf->setFitY($paragraph, 0, $pdf->getRowHeight(), 10);
+                                if ($pdf->getCountHeaderSubSub() == 0){
+                                    $pdf->removeWhiteSpace($pdf, $pdf->getRowHeight());
+                                }
+                                CustomerPages::placeHeaderBasedOnType($pdf, $header, $pdf->getTypeForHeaderSubSub($pdf, $valuation), );
+                                CustomerPages::writeWysywigOutputOrParagraph($pdf, $paragraph, $propertyKey);
+                                $pdf->addEnter();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function cashFlow(CustomerBase $pdf, Valuation $valuation)
+    {
+        $header = ucfirst($pdf->trans('report.apollo_full.cashFlow.header.full'));
+        //modeltree dcf
+        $propertyKey = 'valuation_value_dcf_table';
+        if ($pdf->checkIfFixedTableTypeHasData($propertyKey, $valuation)) {
+            $pdf->addPage();
+            //Special case because header needs to be also on new page but without the line as in the full report.
+            $pdf->createHeaderWithParagraphForApollo($pdf, $header, '', 1);
+            CustomerPages::customisedDCFTable($pdf, $propertyKey, $valuation);
+        }
+        CustomerPages::writeCashFlowSummary($pdf, $valuation);
+        CustomerPages::showYields($pdf, $valuation, 0.1);
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function photos(CustomerBase $pdf, Valuation $valuation)
+    {
+        $imageKeys = $pdf->getImagesForPropertyKey('valuation_report_photo_other', $valuation);
+        $images = [];
+        foreach ($imageKeys as $image) {
+            if (isset($image['fullpath']))
+                $images[] = $image['fullpath'];
+        }
+        if (!empty($images)) {
+            $pdf->AddPage();
+            $descriptions = CentralPagesAttachments::collectPhotoDescriptions($valuation);
+            self::generatePhotoPages($pdf, $images, 1, 1, ucfirst($pdf->trans('report.apollo_full.photos.header.full')), $descriptions, true, 'six');
+        }
+    }
+
+    /**
+     * todo move to centalpages attachements when it works
+     * therefore same paramters are used
+     *
+     * @param CentralBase $pdf
+     * @param $photoArray
+     * @param int $header
+     * @param int $footer
+     * @param string $bookmarkName
+     * @param null $descriptions
+     * @param bool $chapter
+     * @param string $nrPhotosOnPage
+     * @throws KateErrorFileNonReadableException
+     */
+    public static function generatePhotoPages(CentralBase $pdf, $photoArray, $header = 1, $footer = 1, $bookmarkName = "Bijlage foto's", $descriptions = null, $chapter = false, $nrPhotosOnPage = 'two')
+    {
+        $pdf->header = $header;
+        $pdf->footer = $footer;
+        if ($chapter == false && $nrPhotosOnPage == 'two') {
+            //old way of showing photos
+            CentralPagesAttachments::generatePhotoPages($pdf, $photoArray, $header, $footer, $bookmarkName, $descriptions);
+        } else {
+            if ($chapter) {
+                $pdf->createHeader($bookmarkName);
+            }
+            if ($nrPhotosOnPage == 'six') {
+                $marginBetweenPhotos = 5;
+                $currentY = $pdf->GetY();
+                $bMargin = $pdf->GetBMargin();
+                $heightLeft = $pdf->GetPageHeight() - $currentY - $bMargin;
+                if (empty($descriptions)) {
+                    $marginForDescriptions = 0;
+                } else {
+                    $marginForDescriptions = $pdf->getRowHeight();
+                }
+                $heightPerPhoto = (($heightLeft - 2 * $marginBetweenPhotos) / 3) - $marginForDescriptions;
+                $widthPerPhoto = ($pdf->GetPageWidth() - $pdf->GetLMargin() - $pdf->GetRMargin() - $marginBetweenPhotos) / 2;
+
+                $photoCounter = 0;
+                foreach ($photoArray as $nr => $fotofile) {
+                    $photoCounter++;
+
+                    //StartX of the photo
+                    if ($photoCounter % 2 == 0) {
+                        $startX = $pdf->GetLMargin() + $widthPerPhoto + $marginBetweenPhotos;
+                    } else {
+                        $startX = $pdf->GetLMargin();
+                    }
+                    //StartY of the photo
+                    $startY = $currentY;
+                    $photoNumberOnPage = $photoCounter % 6; //where 0 = 6
+                    if ($photoNumberOnPage == 3 || $photoNumberOnPage == 4) {
+                        $startY = $currentY + $heightPerPhoto + $marginForDescriptions + $marginBetweenPhotos;
+                    } elseif ($photoNumberOnPage == 5 || $photoNumberOnPage == 0) {
+                        $startY = $currentY + 2 * ($heightPerPhoto + $marginForDescriptions + $marginBetweenPhotos);
+                    }
+
+                    $pdf->addImageToPage($fotofile, $startX, $startY, $widthPerPhoto, $heightPerPhoto, 'C', false, false);
+
+                    if (!empty($descriptions) && !empty($descriptions[$nr])) {
+                        // show description
+                        $pdf->SetY($startY + $heightPerPhoto);
+                        $pdf->SetX($startX);
+                        $pdf->MultiCell($widthPerPhoto, $marginForDescriptions, $descriptions[$nr], 0, 'C');
+                    }
+
+                    if ($photoCounter % 6 == 0 && $photoCounter != count($photoArray)) {
+                        //after the sixth photo add a page and recalculate the heights, but only if it is not the last one
+                        //there could be other heights as the first could have a header, and the next pages do not
+                        $pdf->AddPage();
+                        $currentY = $pdf->GetY();
+                        $heightLeft = $pdf->GetPageHeight() - $currentY - $bMargin;
+                        $heightPerPhoto = (($heightLeft - 2 * $marginBetweenPhotos) / 3) - $marginForDescriptions;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @throws Exception
+     */
+    public static function incomeApproach(CustomerBase $pdf, Valuation $valuation)
+    {
+        if ($pdf->checkIncomeApproach($valuation) || $pdf->checkIfResidualReport($pdf, $valuation)) {
+            //only show when it is an income approach valuation, however it can be an income approach valuation on a land plot
+            //strangely this chapter should not show in that case as the land value chapter suffices in that case
+
+            //always start on a new page
+            $pdf->AddPage();
+            $header = $pdf->checkOnLeasehold($valuation) ?
+                $pdf->trans('report.apollo_full.incomeApproach.header.fullOwner') :
+                $pdf->trans('report.apollo_full.incomeApproach.header.full');
+            CustomerPages::placeHeaderBasedOnType($pdf, $header, $pdf->getTypeForMainHeader($pdf, $valuation));
+
+            //Yields - completely configured with modeltree
+            $tableKey = 'valuation_value_ewv_income_table';
+            if ($pdf->checkIfFixedTableTypeHasData($tableKey)) {
+                self::placeEWVIncomeTable($pdf, $valuation);
+            }
+
+            //operating costs part - completely configured with modeltree
+            //New way with modeltree figures
+            $tableKey = 'valuation_value_ewv_opex_table';
+            if ($pdf->checkIfFixedTableTypeHasData($tableKey)) {
+                CustomerPagesObject::placeOpexTable($pdf, $valuation);
+
+            }
+
+            //EWV Overview
+            self::placeEWVOverview($pdf, $valuation);
+
+            //Custom Vacancy table
+            $tableKey = 'valuation_value_ewv_vacancy_table';
+            if ($pdf->checkIfFixedTableTypeHasData($tableKey)) {
+                self::placeEWVVacanyTable($pdf, $valuation);
+            }
+            $pdf->addEnter();
+            $ewvTotalVacancyCosts = $valuation->getPropertyValue('valuation_value_ewv_corr_vacancy') + $valuation->getPropertyValue('valuation_value_corr_letting_fee');
+            //Custom rent loss table
+            $tableKey = 'valuation_value_ewv_rentloss_table';
+            if ($pdf->checkIfFixedTableTypeHasData($tableKey) && $ewvTotalVacancyCosts != 0) {
+                self::placeEWVRentLossTable($pdf, $valuation);
+            }
+            //Custom Letting expenses table
+            $tableKey = 'valuation_value_ewv_lettingexpenses_table';
+            if ($pdf->checkIfFixedTableTypeHasData($tableKey) && $ewvTotalVacancyCosts != 0) {
+                self::placeEWVLettingExpensesTable($pdf, $valuation);
+            }
+        }
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param array $tableKeys
+     * @throws Exception
+     */
+    public static function placeStandardTablesForApollo(CustomerBase $pdf, array $tableKeys): void
+    {
+        foreach ($tableKeys as $tableKey => $value)
+            if ($pdf->checkIfFixedTableTypeHasData($tableKey)) {
+                $pdf->setFitY2('', 0, 50);
+                $pdf->createHeaderSub($pdf->trans($value));
+                CustomerPages::renderFixedTableTypeForApollo($pdf, $tableKey);
+            }
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param string $textString
+     * @param int $fontSize
+     * @param string $fontStyle
+     * @return void
+     */
+    public static function customFont(CustomerBase $pdf, string $textString, int $fontSize = 12, string $fontStyle = '')
+    {
+        $pdf->SetFont('', $fontStyle, $fontSize);
+        $pdf->setText($textString);
+        $pdf->resetFont();
+    }
+
+    /**
+     * Create a top level header in toc
+     *
+     * @param CustomerBase $pdf
+     * @param string $header
+     * @param string $type none|numeric|alpha|numberOnly
+     * @param array $style
+     * @param int $marginTop
+     * @param int $marginBottom
+     * @param int $indentLeft
+     * @param bool $toc
+     * @param string $alignment
+     * @param bool $withEndDot
+     * @return void
+     */
+    public static function createHeaderForObjectReportOnSamePage(Customerbase $pdf, string $header, $type = 'numeric', $style = [''], $marginTop = 0, $marginBottom = 2, $indentLeft = 0, $toc = true, $alignment = 'L', $withEndDot = false)
+    {
+        $pdf->SetFont($pdf->getFontHeader());
+        $pdf->setCountHeader($pdf->getCountHeader() + 1);
+        $pdf->setCountHeaderSub(0);
+        $pdf->setCountHeaderSubSub(0);
+        $pdf->customHeaderFont();
+        $color = [
+            [$pdf->getFontcolorHeaderR(), $pdf->getFontcolorHeaderG(), $pdf->getFontcolorHeaderB()],
+            [$pdf->getFontcolorHeaderR(), $pdf->getFontcolorHeaderG(), $pdf->getFontcolorHeaderB()],
+        ];
+
+        $data = [];
+
+        if ($type == 'none') {
+            $data[] = $header;
+        } else {
+            $prefix = $pdf->getHeaderNumber($pdf->getCountHeader(), $type);
+            if($withEndDot) {
+                $prefix .= '.';
+            }
+
+            $data[] = $prefix;
+            $data[] = $header;
+        }
+        $pdf->createPageHeader($data, $style, $marginTop, $marginBottom, $indentLeft, $color, 0, $toc, $alignment);
+        $pdf->SetFont($pdf->getFontText());
+        $pdf->resetFont();
+    }
+
+    /**
+     * Create a top level header in toc
+     *
+     * @param CustomerBase $pdf
+     * @param string $header
+     * @param string $type none|numeric|alpha|numberOnly
+     * @param array $style
+     * @param bool $withEndDot
+     * @return void
+     */
+    public static function createHeaderForObjectReportNewPage(Customerbase $pdf, string $header, $type = 'numeric', $style = [''], $withEndDot = false):void
+    {
+        $pdf->setCountHeader($pdf->getCountHeader() + 1);
+        $pdf->setCountHeaderSub(0);
+        $pdf->setCountHeaderSubSub(0);
+        $pdf->AddPage();
+        $pdf->SetFont($pdf->getFontHeader());
+        $pdf->customHeaderFont();
+        $color = [
+            [$pdf->getFontcolorHeaderR(), $pdf->getFontcolorHeaderG(), $pdf->getFontcolorHeaderB()],
+            [$pdf->getFontcolorHeaderR(), $pdf->getFontcolorHeaderG(), $pdf->getFontcolorHeaderB()],
+        ];
+
+        $data = [];
+
+        if ($type == 'none') {
+            $data[] = $header;
+        } else {
+            $prefix = $pdf->getHeaderNumber($pdf->getCountHeader(), $type);
+            if($withEndDot) {
+                $prefix .= '.';
+            }
+
+            $data[] = $prefix;
+            $data[] = $header;
+        }
+        $pdf->createPageHeader($data, $style, 0, 5, 0, $color, 0, true, 'L');
+        $pdf->SetFont($pdf->getFontText());
+        $pdf->resetFont();
+    }
+
+    /**
+     * Create a top level header in toc
+     *
+     * @param CustomerBase $pdf
+     * @param string $header
+     * @param string $type none|numeric|alpha|numberOnly
+     * @param array $style
+     * @param bool $withEndDot
+     * @return void
+     */
+    public static function createHeaderForObjectReport(Customerbase $pdf, string $header, string $type = 'numeric', array $style = [''], bool $withEndDot = false): void
+    {
+        $pdf->setCountHeader($pdf->getCountHeader() + 1);
+        $pdf->setCountHeaderSub(0);
+        $pdf->setCountHeaderSubSub(0);
+        $pdf->SetFont($pdf->getFontHeader());
+        $pdf->customHeaderFont();
+        $color = [
+            [$pdf->getFontcolorHeaderR(), $pdf->getFontcolorHeaderG(), $pdf->getFontcolorHeaderB()],
+            [$pdf->getFontcolorHeaderR(), $pdf->getFontcolorHeaderG(), $pdf->getFontcolorHeaderB()],
+        ];
+
+        $data = [];
+
+        if ($type == 'none') {
+            $data[] = $header;
+        } else {
+            $prefix = $pdf->getHeaderNumber($pdf->getCountHeader(), $type);
+            if($withEndDot) {
+                $prefix .= '.';
+            }
+
+            $data[] = $prefix;
+            $data[] = $header;
+        }
+        $pdf->createPageHeader($data, $style, 0, 3, 0, $color, 0, true);
+        $pdf->resetFont();
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @param string $tableKey
+     * @throws Exception
+     */
+    private static function placeOpexTable(CustomerBase $pdf, Valuation $valuation, $tableKey = 'valuation_value_ewv_opex_table')
+    {
+        //Opex part via the MT connection way
+        $pdf->setFitY2('', 0, 50, $pdf->getRowHeight());
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.incomeApproach.opex.header'), 1);
+
+        //the modeltree way of making the opex table
+        //it's completely composed of itself but the headers of the original table are used
+        $array = $pdf->getEWVOpexTableData($pdf, $valuation);
+
+        //place the available data in the right places of the table
+        $header = $array['header'] ?? [];
+        $data = $array['data'] ?? [];
+        $total = $array['total'] ?? [];
+        $table = new Table($pdf);
+        $table->setRowsHeader($header);
+        $table->setRowsData($data);
+        $table->setRowsTotal($total);
+
+        $config = $pdf->getTableConfigurationWithPadding($pdf);
+        //make sure the headers show on each page and render table
+        $width = [20, 28, 24, 19, 19, 22, 24, 0];
+        $config->setWidth($width);
+        $config->setAlignmentForAllTypes(['L', 'L', 'R', 'R', 'R', 'R', 'R', 'R', 'R']);
+        $pdf->fixedTableHeader = [
+            'propertyKey' => $tableKey,
+            'config' => $config
+        ];
+        $table->renderTable($config);
+        $pdf->fixedTableHeader = null;
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @param string $tableKey
+     * @throws Exception
+     */
+    private static function placeEWVIncomeTable(CustomerBase $pdf, Valuation $valuation, $tableKey = 'valuation_value_ewv_income_table')
+    {
+        //vacancy part via the MT connection way
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), ($pdf->getRowHeight() *10));
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.incomeApproach.yields.header'), 1);
+
+        //the modeltree way of making the yield table
+        //it's completely composed of itself but the headers of the orinial table are used
+        $array = $pdf->getEwvIncomeTableData($pdf, $valuation);
+
+        //place the available data in the right places of the table
+        $header = $array['header'] ?? [];
+        $data = $array['data'] ?? [];
+        $total = $array['total'] ?? [];
+        $table = new Table($pdf);
+        $table->setRowsHeader($header);
+        $table->setRowsData($data);
+        $table->setRowsTotal($total);
+
+        $config = $pdf->getTableConfigurationWithPadding($pdf);
+        //make sure the headers show on each page and render table
+        $width = [20, 28, 20, 15, 15, 20, 20, 22, 0];
+        $config->setWidth($width);
+        $config->setAlignmentForAllTypes(['L', 'L', 'R', 'R', 'R', 'R', 'R', 'R', 'R']);
+
+        $pdf->fixedTableHeader = [
+            'propertyKey' => $tableKey,
+            'config' => $config
+        ];
+        $table->renderTable($config);
+        $pdf->fixedTableHeader = null;
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @param string $tableKey
+     * @throws Exception
+     */
+    private static function placeEWVVacanyTable(CustomerBase $pdf, Valuation $valuation, $tableKey = 'valuation_value_ewv_vacancy_table')
+    {
+        //the modeltree way of making the vacancy table
+        //it's completely composed of itself but the headers of the orinial table are used
+        $array = $pdf->getEwvVacancytableTableData($pdf, $valuation);
+
+        //place the available data in the right places of the table
+        $header = $array['header'] ?? [];
+        $data = $array['data'] ?? [];
+        $total = $array['total'] ?? [];
+        $table = new Table($pdf);
+        $table->setRowsHeader($header);
+        $table->setRowsData($data);
+        $table->setRowsTotal($total);
+        $config = $pdf->getTableConfigurationWithPadding($pdf);
+        //make sure the headers show on each page and render table
+        $width = [20, 28, 24, 24, 24, 24, 0];
+        $config->setWidth($width);
+        $config->setAlignmentForAllTypes(['L', 'L', 'R', 'R', 'R', 'R', 'R']);
+
+        if(StaticHelper::value($data)) {
+            //vacancy part via the MT connection way
+            $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), ($pdf->getRowHeight() * 10), $pdf->getRowHeight());
+            CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.incomeApproach.vacancy.header'), 1);
+            $pdf->fixedTableHeader = [
+                'propertyKey' => $tableKey,
+                'config' => $config
+            ];
+            $table->renderTable($config);
+            $pdf->fixedTableHeader = null;
+        }
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @param string $tableKey
+     * @throws Exception
+     */
+    private static function placeEWVRentLossTable(CustomerBase $pdf, Valuation $valuation, $tableKey = 'valuation_value_ewv_rentloss_table')
+    {
+        //Letting expenses part via the MT connection way
+        $pdf->setFitY2('', 0, 50);
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.incomeApproach.ewv_rentloss_table.header'), 8);
+
+        //the modeltree way of making the letting expenses table
+        //it's completely composed of itself but the headers of the original table are used
+        $array = $pdf->getRentLossData($pdf, $valuation);
+
+        //place the available data in the right places of the table
+        $header = $array['header'] ?? [];
+        $data = $array['data'] ?? [];
+        $total = $array['total'] ?? [];
+        $table = new Table($pdf);
+        $table->setRowsHeader($header);
+        $table->setRowsData($data);
+        $table->setRowsTotal($total);
+
+        $config = $pdf->getTableConfigurationWithPadding($pdf);
+        //make sure the headers show on each page and render table
+        $width = [20, 28, 17, 18, 18, 18, 18, 10, 12, 0];
+        $config->setWidth($width);
+        $config->setAlignmentForAllTypes(['L', 'L', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R']);
+
+        $pdf->fixedTableHeader = [
+            'propertyKey' => $tableKey,
+            'config' => $config
+        ];
+        $table->renderTable($config);
+        $pdf->fixedTableHeader = null;
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @param string $tableKey
+     * @throws Exception
+     */
+    private static function placeEWVLettingExpensesTable(CustomerBase $pdf, Valuation $valuation, $tableKey = 'valuation_value_ewv_lettingexpenses_table')
+    {
+        //Letting expenses part via the MT connection way
+        $pdf->setFitY2('', 0, 50, $pdf->getRowHeight());
+        CustomerPages::placeHeaderBasedOnType($pdf, $pdf->trans('report.apollo_full.incomeApproach.ewv_lettingexpenses_table.header'), 8);
+
+        //the modeltree way of making the letting expenses table
+        //it's completely composed of itself but the headers of the original table are used
+        $array = $pdf->getEWVLettingExpensesData($pdf, $valuation);
+
+        //place the available data in the right places of the table
+        $header = $array['header'] ?? [];
+        $data = $array['data'] ?? [];
+        $total = $array['total'] ?? [];
+        $table = new Table($pdf);
+        $table->setRowsHeader($header);
+        $table->setRowsData($data);
+        $table->setRowsTotal($total);
+
+        $config = $pdf->getTableConfigurationWithPadding($pdf);
+        //make sure the headers show on each page and render table
+        $width = [20, 28, 14, 14, 14, 14, 14, 15, 15, 12, 0];
+        $config->setWidth($width);
+        $config->setHeadersAlign(['L', 'L', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'L', 'R']);
+        $rowsAndTotalAlign =['L', 'L', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R'];
+        $config->setRowsAlign($rowsAndTotalAlign);
+        $config->setTotalsAlign($rowsAndTotalAlign);
+
+        $pdf->fixedTableHeader = [
+            'propertyKey' => $tableKey,
+            'config' => $config
+        ];
+        $table->renderTable($config);
+        $pdf->fixedTableHeader = null;
+    }
+
+    /**
+     * @param CustomerBase $pdf
+     * @param Valuation $valuation
+     * @return void
+     * @throws Exception
+     */
+    private static function placeEWVOverview(CustomerBase $pdf, Valuation $valuation)
+    {
+        //TODO Create a function for the repeating code
+        //create the sum /totals part
+        //total show is 16 rows
+        $pdf->setFitYForApollo('', 0, $pdf->getRowHeight(), $pdf->getRowHeight() * 18, $pdf->getRowHeight());
+        $width = [20, 100, 30, 0];
+        $data = [];
+
+        //Opex ERV
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.erv')),
+            '',
+            //modeltree EWV.ewv_market_rent
+            $pdf->getPropertyValueOutputOrShowZero('valuation_values_ewv_erv_incl_vacancy')
+        ];
+
+        //Opex operations costs
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.opex')),
+            //modeltree EWV.ewv_non_recoverable_opex
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_ewv_operation_costs_perc'),
+            //modeltree EWV.ewv_non_recoverable_opex_value
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_ewv_total_operating_costs')
+        ];
+
+        //Opex Noi total
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.noi')),
+            '',
+            //modeltree EWV.ewv_net_operating_income
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_ewv_noi_total')
+        ];
+
+        //Opex Noi land
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.capLand')),
+            '',
+            //modeltree EWV.ewv_capital_interest_profland
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_noi_land')
+        ];
+
+        //Opex Building
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.noiBuilding')),
+            '',
+            //modeltree EWV.ewv_noi_building
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_noi_building')
+        ];
+
+        //Opex Capitalization factor
+        $data[] = [
+            $pdf->trans('report.apollo_full.incomeApproach.opex.capFactor'),
+            //modeltree EWV.ewv_capitalization_factor
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_ewv_capitalization_factor'),
+            ''
+        ];
+
+        //Opex Capitalized earnings build
+        $capitalizedEarningsBuild = $valuation->getPropertyValue('valuation_value_multi_ewv');
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.totalCapitalised')),
+            '',
+            //modeltree EWV.ewv_capitalized_earnings_build
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_multi_ewv')
+        ];
+
+        //Land value profitable
+        $landValueProfitable = $valuation->getPropertyValue('valuation_value_profitable_land_value_amount');
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.land_value_profitable')),
+            '',
+            //modeltree Payload.EWV.ewv_land_value_prof
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_profitable_land_value_amount')
+        ];
+
+        //placing the values
+        $data = $pdf->addToArray($data, '', 0);
+        $pdf->makeRowsWithColumns($width, $data, [], [], [], ['', 'L', 'R', 'R']);
+
+        $data = [];
+        $preliminaryIncomeValue = intval($capitalizedEarningsBuild + $landValueProfitable);
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.preliminary_income_value')),
+            '',
+            $pdf->customMoneyOutputOrZero($preliminaryIncomeValue)
+        ];
+
+        $data = $pdf->addToArray($data, '', 0);
+        $pdf->makeRowsWithColumns($width, $data, ['', 'T', 'T', 'T'], [], [], ['', 'L', 'R', 'R']);
+
+        $data = [];
+
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.distinctive_property_features')),
+            '',
+            //modeltree EWV.ewv_overrent
+
+        ];
+        $data = $pdf->addToArray($data, '', 0);
+        $pdf->makeRowsWithColumns($width, $data, [], [], [], ['', 'L', 'R', 'R']);
+
+        $data =[];
+        //Opex land value
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.land_value_non_profitable')),
+            '',
+            //modeltree EWV.ewv_land_value_total
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_nonprofitable_land_value_amount')
+        ];
+
+        //Opex overrent
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.overrent')),
+            '',
+            //modeltree EWV.ewv_overrent
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_overrent')
+        ];
+
+        //Opex Underrent
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.underrent')),
+            '',
+            //modeltree EWV.ewv_underrent
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_underent')
+        ];
+
+        //Opex Incentives
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.rentFree')),
+            '',
+            //modeltree EWV.ewv_rent_free_current
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_corr_run_incentives')
+        ];
+
+        //Opex vacancy costs
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.vacancyCosts')),
+            '',
+            //modeltree EWV.ewv_vacancy_costs
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_ewv_corr_vacancy')
+        ];
+
+        //Opex reletting fee
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.reLetting')),
+            '',
+            //modeltree EWV.ewv_re_letting_expenses
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_corr_letting_fee')
+        ];
+
+        //Opex corr apex
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.capex')),
+            '',
+            //modeltree EWV.ewv_capex
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_ewv_corr_capex')
+        ];
+
+        //Opex Other
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.other')),
+            '',
+            //modeltree EWV.ewv_other_value
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_ewv_corr_other')
+        ];
+
+        //Placing the values
+        $data = $pdf->addToArray($data, '', 0);
+        $pdf->makeRowsWithColumns([30, 100, 30, 0], $data, [], [], [], ['', 'L', 'R', 'R']);
+
+        $data = [];
+
+        //Opex ewv amount unrounded
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.incomeUnrounded')),
+            '',
+            //modeltree EWV.ewv_income_value_unrounded
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_ewv_amount_unrounded')
+        ];
+        $data = $pdf->addToArray($data, '', 0);
+        $pdf->makeRowsWithColumns($width, $data, ['', 'T', 'T', 'T'], [], [], ['', 'L', 'R', 'R']);
+
+        $data = [];
+        //Opex amount rounded
+        $data[] = [
+            ucfirst($pdf->trans('report.apollo_full.incomeApproach.opex.incomeRounded')),
+            '',
+            //modeltree EWV.ewv_income_value_rounded
+            $pdf->getPropertyValueOutputOrShowZero('valuation_value_ewv_amount')
+        ];
+        //Placing the values
+        $data = $pdf->addToArray($data, '', 0);
+        $pdf->makeRowsWithColumns($width, $data, [], ['B'], [], ['', 'L', 'R', 'R']);
+    }
+}
