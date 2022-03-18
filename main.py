@@ -33,7 +33,7 @@ if keys_amount_found > 0:
         for key in keys_without_duplicates:
             print(key)
     else:
-        print('Input nog recognized.')
+        print('Input not recognized.')
         sys.exit()
 else:
     print('No keys found! Check if file is saved as .txt file. You can do this easily with Notepad ++')
